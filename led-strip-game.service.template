@@ -1,0 +1,21 @@
+[Unit]
+Description=LED Strip Game Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory={{INSTALL_DIR}}
+Environment="PATH={{INSTALL_DIR}}/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+Environment="LC_ALL=C.UTF-8"
+Environment="LANG=C.UTF-8"
+Environment="SDL_VIDEODRIVER=dummy"
+Environment="SDL_AUDIODRIVER=dummy"
+Environment="DISPLAY="
+Environment="HOME={{HOME_DIR}}"
+ExecStart={{INSTALL_DIR}}/venv/bin/python {{INSTALL_DIR}}/game.py
+Restart=on-failure
+RestartSec=5s
+
+[Install]
+WantedBy=multi-user.target
