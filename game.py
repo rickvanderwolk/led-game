@@ -143,10 +143,10 @@ class LEDGame:
                     'player': 0
                 }
         elif self.num_players == 2:
-            # 2 players: P1=yellow+red, P2=green+blue
+            # 2 players: P1=yellow+green (1st+3rd), P2=red+blue (2nd+4th)
             colors['yellow'] = {'rgb': self.color_defs['yellow']['rgb'], 'button': self.color_defs['yellow']['button'], 'player': 0}
-            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 0}
-            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 1}
+            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 1}
+            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 0}
             colors['blue'] = {'rgb': self.color_defs['blue']['rgb'], 'button': self.color_defs['blue']['button'], 'player': 1}
         elif self.num_players == 3:
             # 3 players: P1=yellow, P2=red, P3=green+blue
@@ -170,8 +170,8 @@ class LEDGame:
             print("   (Connect more controllers for co-op)")
         elif self.num_players == 2:
             print("\n👥 Co-op mode (2 players)")
-            print("   P1: 🟡 Yellow + 🔴 Red")
-            print("   P2: 🟢 Green + 🔵 Blue")
+            print("   P1: 🟡 Yellow + 🟢 Green")
+            print("   P2: 🔴 Red + 🔵 Blue")
         elif self.num_players == 3:
             print("\n👥 Co-op mode (3 players)")
             print("   P1: 🟡 Yellow")
@@ -317,13 +317,13 @@ class LEDGame:
             else:
                 return ['yellow']
         elif self.num_players == 2:
-            # 2 players: start with 1 each, unlock second color
+            # 2 players: P1=yellow+green, P2=red+blue (unlock order)
             if self.score >= 6:
                 return ['yellow', 'red', 'green', 'blue']
             elif self.score >= 3:
                 return ['yellow', 'red', 'green']
             else:
-                return ['yellow', 'green']
+                return ['yellow', 'red']
         elif self.num_players == 3:
             # 3 players: start with 1 each, P3 gets second color later
             if self.score >= 6:
@@ -367,7 +367,7 @@ class LEDGame:
                 print(f"🎨 +Blue!")
         elif self.num_players == 2:
             if len(available) == 3 and self.score == 3:
-                print(f"🎨 +Red (P1)!")
+                print(f"🎨 +Green (P1)!")
             elif len(available) == 4 and self.score == 6:
                 print(f"🎨 +Blue (P2)!")
         elif self.num_players == 3:
