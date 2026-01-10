@@ -1,5 +1,5 @@
 [Unit]
-Description=LED Strip Game Service
+Description=LED Runner Service
 After=network.target
 
 [Service]

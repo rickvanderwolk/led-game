@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LED Strip Game - Simpel reactiespel op een LED strip
+LED Runner - Simpel reactiespel op een LED strip
 """
 
 import time

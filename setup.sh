@@ -2,7 +2,7 @@
 
 set -e
 
-echo "🎮 LED Strip Game - Installatie"
+echo "🎮 LED Runner - Installatie"
 echo "================================"
 
 # Installeer systeem dependencies
@@ -44,33 +44,33 @@ echo "   Installatie directory: $INSTALL_DIR"
 sed -e "s|{{USER}}|$CURRENT_USER|g" \
     -e "s|{{INSTALL_DIR}}|$INSTALL_DIR|g" \
     -e "s|{{HOME_DIR}}|$HOME_DIR|g" \
-    led-strip-game.service.template > led-strip-game.service
+    led-runner.service.template > led-runner.service
 
 # Kopieer service file naar systemd directory
-sudo cp led-strip-game.service /etc/systemd/system/
+sudo cp led-runner.service /etc/systemd/system/
 
 # Herlaad systemd
 sudo systemctl daemon-reload
 
 # Enable service (start bij boot)
-sudo systemctl enable led-strip-game.service
+sudo systemctl enable led-runner.service
 
 echo ""
 echo "🚀 Service starten..."
-sudo systemctl start led-strip-game.service
+sudo systemctl start led-runner.service
 
 # Wacht even en check status
 sleep 2
 echo ""
-if sudo systemctl is-active --quiet led-strip-game.service; then
+if sudo systemctl is-active --quiet led-runner.service; then
     echo "✅ Service draait!"
     echo ""
     echo "Bekijk live logs met:"
-    echo "  journalctl -u led-strip-game -f"
+    echo "  journalctl -u led-runner -f"
 else
     echo "⚠️  Service kon niet starten. Check de status:"
-    echo "  sudo systemctl status led-strip-game"
-    echo "  journalctl -u led-strip-game -n 50"
+    echo "  sudo systemctl status led-runner"
+    echo "  journalctl -u led-runner -n 50"
 fi
 
 echo ""
@@ -79,11 +79,11 @@ echo "✅ Installatie compleet!"
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "Service commando's:"
-echo "  sudo systemctl start led-strip-game    # Start de service"
-echo "  sudo systemctl stop led-strip-game     # Stop de service"
-echo "  sudo systemctl restart led-strip-game  # Herstart de service"
-echo "  sudo systemctl status led-strip-game   # Status bekijken"
-echo "  journalctl -u led-strip-game -f        # Logs bekijken (live)"
+echo "  sudo systemctl start led-runner    # Start de service"
+echo "  sudo systemctl stop led-runner     # Stop de service"
+echo "  sudo systemctl restart led-runner  # Herstart de service"
+echo "  sudo systemctl status led-runner   # Status bekijken"
+echo "  journalctl -u led-runner -f        # Logs bekijken (live)"
 echo ""
 echo "De service start automatisch op bij reboot."
 echo ""

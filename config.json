@@ -1,5 +1,5 @@
 {
-  "_comment": "LED Strip Game Configuratie",
+  "_comment": "LED Runner Configuratie",
   "led": {
     "count": 60,
     "pin": 12,
