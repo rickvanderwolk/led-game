@@ -2,90 +2,90 @@
 
 set -e
 
-echo "🎮 LED Runner - Installatie"
+echo "🎮 LED Runner - Installation"
 echo "================================"
 
-# Installeer systeem dependencies
+# Install system dependencies
 echo ""
-echo "📦 Installeer systeem dependencies..."
+echo "📦 Installing system dependencies..."
 sudo apt update
 sudo apt install -y python3-dev python3-venv python3-pip build-essential
 
-# Maak virtual environment
+# Create virtual environment
 echo ""
-echo "🐍 Maak virtual environment..."
+echo "🐍 Creating virtual environment..."
 python3 -m venv venv
 
-# Activeer virtual environment
+# Activate virtual environment
 source venv/bin/activate
 
 # Upgrade pip
 echo ""
-echo "⬆️  Upgrade pip..."
+echo "⬆️  Upgrading pip..."
 pip install --upgrade pip
 
-# Installeer Python packages
+# Install Python packages
 echo ""
-echo "📚 Installeer Python packages..."
+echo "📚 Installing Python packages..."
 pip install -r requirements.txt
 
 echo ""
-echo "🔧 Installeer systemd service..."
+echo "🔧 Installing systemd service..."
 
-# Bepaal huidige user en directory
+# Determine current user and directory
 CURRENT_USER=$(whoami)
 INSTALL_DIR=$(pwd)
 HOME_DIR=$(eval echo ~$CURRENT_USER)
 
-echo "   Installeer voor gebruiker: $CURRENT_USER"
-echo "   Installatie directory: $INSTALL_DIR"
+echo "   Installing for user: $CURRENT_USER"
+echo "   Installation directory: $INSTALL_DIR"
 
-# Genereer service file uit template
+# Generate service file from template
 sed -e "s|{{USER}}|$CURRENT_USER|g" \
     -e "s|{{INSTALL_DIR}}|$INSTALL_DIR|g" \
     -e "s|{{HOME_DIR}}|$HOME_DIR|g" \
     led-runner.service.template > led-runner.service
 
-# Kopieer service file naar systemd directory
+# Copy service file to systemd directory
 sudo cp led-runner.service /etc/systemd/system/
 
-# Herlaad systemd
+# Reload systemd
 sudo systemctl daemon-reload
 
-# Enable service (start bij boot)
+# Enable service (start at boot)
 sudo systemctl enable led-runner.service
 
 echo ""
-echo "🚀 Service starten..."
+echo "🚀 Starting service..."
 sudo systemctl start led-runner.service
 
-# Wacht even en check status
+# Wait and check status
 sleep 2
 echo ""
 if sudo systemctl is-active --quiet led-runner.service; then
-    echo "✅ Service draait!"
+    echo "✅ Service is running!"
     echo ""
-    echo "Bekijk live logs met:"
+    echo "View live logs with:"
     echo "  journalctl -u led-runner -f"
 else
-    echo "⚠️  Service kon niet starten. Check de status:"
+    echo "⚠️  Service could not start. Check the status:"
     echo "  sudo systemctl status led-runner"
     echo "  journalctl -u led-runner -n 50"
 fi
 
 echo ""
-echo "✅ Installatie compleet!"
+echo "✅ Installation complete!"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
-echo "Service commando's:"
-echo "  sudo systemctl start led-runner    # Start de service"
-echo "  sudo systemctl stop led-runner     # Stop de service"
-echo "  sudo systemctl restart led-runner  # Herstart de service"
-echo "  sudo systemctl status led-runner   # Status bekijken"
-echo "  journalctl -u led-runner -f        # Logs bekijken (live)"
+echo "Service commands:"
+echo "  sudo systemctl start led-runner    # Start the service"
+echo "  sudo systemctl stop led-runner     # Stop the service"
+echo "  sudo systemctl restart led-runner  # Restart the service"
+echo "  sudo systemctl status led-runner   # View status"
+echo "  journalctl -u led-runner -f        # View logs (live)"
 echo ""
-echo "De service start automatisch op bij reboot."
+echo "The service will start automatically on reboot."
 echo ""
-echo "Of start handmatig met: ./start.sh"
+echo "Or start manually with: ./start.sh"
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"

@@ -1,11 +1,11 @@
 {
-  "_comment": "LED Runner Configuratie",
+  "_comment": "LED Runner Configuration",
   "led": {
     "count": 60,
     "pin": 12,
-    "_pin_options": "12, 13, 18 (audio=off vereist op Pi4/5), 21",
+    "_pin_options": "12, 13, 18 (audio=off required on Pi4/5), 21",
     "brightness": 255,
-    "_brightness_range": "0-255 (0=uit, 255=maximaal)"
+    "_brightness_range": "0-255 (0=off, 255=maximum)"
   },
   "game": {
     "speed": 0.3,
@@ -20,7 +20,7 @@
       "g": 255,
       "b": 255
     },
-    "_player_color_comment": "Wit zodat het niet conflicteert met blauw obstakel",
+    "_player_color_comment": "White so it doesn't conflict with blue obstacle",
     "target_color": {
       "r": 255,
       "g": 255,
