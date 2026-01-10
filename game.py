@@ -6,6 +6,8 @@ Supports 1-4 players co-op
 
 import time
 import random
+import signal
+import sys
 import pygame
 import board
 import neopixel
@@ -491,8 +493,25 @@ class LEDGame:
             print(f"Score: {self.score}")
             self.update_difficulty()
 
+    def cleanup(self):
+        """Clean up resources"""
+        self.running = False
+        self.strip.fill((0, 0, 0))
+        self.strip.show()
+        pygame.quit()
+
+    def signal_handler(self, signum, frame):
+        """Handle termination signals"""
+        print(f"\n👋 Signal {signum} received, shutting down...")
+        self.cleanup()
+        sys.exit(0)
+
     def run(self):
         """Main game loop"""
+        # Setup signal handlers for clean shutdown
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        signal.signal(signal.SIGINT, self.signal_handler)
+
         print("\n🎮 LED Runner")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("START = Pause / Resume / New game")
@@ -522,9 +541,7 @@ class LEDGame:
         except KeyboardInterrupt:
             print(f"\n\n👋 Stopped. Score: {self.score}")
         finally:
-            self.strip.fill((0, 0, 0))
-            self.strip.show()
-            pygame.quit()
+            self.cleanup()
 
 
 if __name__ == "__main__":
