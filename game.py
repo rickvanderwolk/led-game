@@ -55,24 +55,8 @@ class LEDGame:
             print(f"   Are you running the script with sudo?")
             exit(1)
 
-        # Setup pygame and controllers
+        # Setup pygame
         pygame.init()
-
-        num_joysticks = pygame.joystick.get_count()
-        if num_joysticks == 0:
-            print("⚠️  No controller found! Connect a controller.")
-            exit(1)
-
-        # Initialize all connected controllers (max 4)
-        self.joysticks = []
-        for i in range(min(num_joysticks, 4)):
-            js = pygame.joystick.Joystick(i)
-            js.init()
-            self.joysticks.append(js)
-            print(f"🎮 Controller {i + 1}: {js.get_name()}")
-
-        # Determine player count (1-4)
-        self.num_players = len(self.joysticks)
 
         # Start button
         self.start_button = self.game_config['buttons'].get('start', 9)
@@ -85,11 +69,11 @@ class LEDGame:
             'blue': {'rgb': (0, 0, 255), 'button': self.game_config['buttons']['blue']}
         }
 
-        # Assign colors to players based on player count
-        self.colors = self.assign_colors_to_players()
-
-        # Print mode info
-        self.print_mode_info()
+        # Detect controllers (will exit if none found)
+        self.joysticks = []
+        self.num_players = 0
+        self.colors = {}
+        self.detect_controllers(initial=True)
 
         # Cache player color (white)
         self.player_color = (
@@ -102,6 +86,47 @@ class LEDGame:
         self.running = True
         self.reset_game()
         self.state = self.STATE_PLAYING
+
+    def detect_controllers(self, initial=False):
+        """Detect and initialize controllers"""
+        # Quit existing joysticks
+        for js in self.joysticks:
+            js.quit()
+
+        # Re-init joystick module to detect changes
+        pygame.joystick.quit()
+        pygame.joystick.init()
+
+        num_joysticks = pygame.joystick.get_count()
+
+        if num_joysticks == 0:
+            if initial:
+                print("⚠️  No controller found! Connect a controller.")
+                exit(1)
+            else:
+                print("⚠️  No controller found! Connect a controller and press START.")
+                return False
+
+        # Initialize all connected controllers (max 4)
+        old_num_players = self.num_players
+        self.joysticks = []
+        for i in range(min(num_joysticks, 4)):
+            js = pygame.joystick.Joystick(i)
+            js.init()
+            self.joysticks.append(js)
+            print(f"🎮 Controller {i + 1}: {js.get_name()}")
+
+        # Update player count
+        self.num_players = len(self.joysticks)
+
+        # Reassign colors
+        self.colors = self.assign_colors_to_players()
+
+        # Print mode info if changed or initial
+        if initial or self.num_players != old_num_players:
+            self.print_mode_info()
+
+        return True
 
     def assign_colors_to_players(self):
         """Assign colors to players based on player count"""
@@ -406,9 +431,12 @@ class LEDGame:
                         self.last_update = time.time()
                         print("\n▶️  RESUMED")
                     elif self.state == self.STATE_GAME_OVER:
+                        # Re-detect controllers for new game
+                        print("\n🔄 Checking controllers...")
+                        self.detect_controllers()
                         self.reset_game()
                         self.state = self.STATE_PLAYING
-                        print("\n🎮 New game!")
+                        print("🎮 New game!")
 
                 # Color buttons (only when playing)
                 elif self.state == self.STATE_PLAYING:
