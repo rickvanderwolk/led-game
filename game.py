@@ -13,9 +13,9 @@ import json
 
 class LEDGame:
     # Game states
-    STATE_WAITING = 'waiting'
     STATE_PLAYING = 'playing'
     STATE_PAUSED = 'paused'
+    STATE_GAME_OVER = 'game_over'
 
     def __init__(self, config_file="config.json"):
         """Initialize the game with configuration"""
@@ -82,10 +82,10 @@ class LEDGame:
             self.game_config['player_color']['b']
         )
 
-        # Initialize game state
+        # Initialize game
         self.running = True
-        self.state = self.STATE_WAITING
         self.reset_game()
+        self.state = self.STATE_PLAYING  # Start immediately
 
     def reset_game(self):
         """Reset all game variables for a new game"""
@@ -119,39 +119,18 @@ class LEDGame:
 
         self.strip.show()
 
-    def show_idle_animation(self):
-        """Show idle animation while waiting for start"""
-        t = time.time()
-        led_count = self.led_config['count']
-
-        # Moving dot animation
-        pos = int((t * 10) % led_count)
-
-        self.strip.fill((0, 0, 0))
-
-        # Draw a small trail
-        for i in range(3):
-            idx = (pos - i) % led_count
-            brightness = 255 - (i * 80)
-            self.strip[idx] = (brightness, brightness, brightness)
-
-        self.strip.show()
-
     def show_pause_display(self):
-        """Show pause indicator"""
+        """Show pause indicator - blinking game state"""
         t = time.time()
 
-        # Blink player position slowly
         if int(t * 2) % 2 == 0:
             self.strip.fill((0, 0, 0))
-            # Show obstacles frozen in place
             for obs in self.obstacles:
                 if 0 <= obs['pos'] < self.led_config['count']:
                     self.strip[obs['pos']] = obs['color']
             self.strip[self.player_pos] = self.player_color
         else:
             self.strip.fill((0, 0, 0))
-            # Show obstacles but dim
             for obs in self.obstacles:
                 if 0 <= obs['pos'] < self.led_config['count']:
                     r, g, b = obs['color']
@@ -209,19 +188,6 @@ class LEDGame:
                         self.strip[led_idx] = color_bright
 
         self.strip.show()
-
-    def show_score(self):
-        """Show final score and wait for start button to restart"""
-        print(f"\n{'='*40}")
-        print(f"🏆 FINAL SCORE: {self.score} points!")
-        print(f"{'='*40}\n")
-
-        self.show_score_digits()
-
-        print("Score displayed for 3 seconds...")
-        time.sleep(3.0)
-
-        pygame.event.clear()
 
     def press_button(self, button):
         """Register button press"""
@@ -283,7 +249,6 @@ class LEDGame:
         """Spawn a new obstacle"""
         spawn_pos = self.led_config['count'] - 1
 
-        # Check if spawn position is free
         for obs in self.obstacles:
             if obs['pos'] == spawn_pos:
                 return
@@ -308,12 +273,14 @@ class LEDGame:
 
         self.show_animation(self.game_config['fail_color'], 1.0, 3)
 
-        if self.score > 0:
-            self.show_score()
+        # Show score
+        print(f"\n{'='*40}")
+        print(f"🏆 FINAL SCORE: {self.score} points!")
+        print(f"{'='*40}")
+        print(f"\n⏸️  Press START for new game...")
 
-        self.reset_game()
-        self.state = self.STATE_WAITING
-        print("\n⏸️  Press START to play again...")
+        self.show_score_digits()
+        self.state = self.STATE_GAME_OVER
 
     def handle_input(self):
         """Process controller input"""
@@ -323,17 +290,17 @@ class LEDGame:
             if event.type == pygame.JOYBUTTONDOWN:
                 # Start button handling
                 if event.button == self.start_button:
-                    if self.state == self.STATE_WAITING:
-                        self.state = self.STATE_PLAYING
-                        self.last_update = time.time()
-                        print("\n🎮 Game started!")
-                    elif self.state == self.STATE_PLAYING:
+                    if self.state == self.STATE_PLAYING:
                         self.state = self.STATE_PAUSED
                         print("\n⏸️  PAUSED - Press START to resume")
                     elif self.state == self.STATE_PAUSED:
                         self.state = self.STATE_PLAYING
                         self.last_update = time.time()
                         print("\n▶️  RESUMED")
+                    elif self.state == self.STATE_GAME_OVER:
+                        self.reset_game()
+                        self.state = self.STATE_PLAYING
+                        print("\n🎮 New game started!")
 
                 # Color button handling (only when playing)
                 elif self.state == self.STATE_PLAYING:
@@ -390,22 +357,19 @@ class LEDGame:
         print("\n🎮 LED Runner")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━")
         print("Controls:")
-        print("  START = Start / Pause / Resume")
+        print("  START = Pause / Resume / New game")
         print("  🟡 Y = Yellow")
         print("  🔴 B = Red")
         print("  🟢 A = Green")
         print("  🔵 X = Blue")
-        print("\nPress START to begin!")
+        print("\nGame starting...")
         print("Press CTRL+C to quit\n")
 
         try:
             while self.running:
                 self.handle_input()
 
-                if self.state == self.STATE_WAITING:
-                    self.show_idle_animation()
-
-                elif self.state == self.STATE_PLAYING:
+                if self.state == self.STATE_PLAYING:
                     current_time = time.time()
                     if current_time - self.last_update >= self.current_speed:
                         self.update_obstacles()
@@ -414,6 +378,10 @@ class LEDGame:
 
                 elif self.state == self.STATE_PAUSED:
                     self.show_pause_display()
+
+                elif self.state == self.STATE_GAME_OVER:
+                    # Score stays displayed, just wait for input
+                    pass
 
                 time.sleep(0.01)
 
