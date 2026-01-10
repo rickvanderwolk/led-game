@@ -4,6 +4,7 @@ LED Runner - Simple reaction game on an LED strip
 """
 
 import time
+import random
 import pygame
 import board
 import neopixel
@@ -11,6 +12,11 @@ import json
 
 
 class LEDGame:
+    # Game states
+    STATE_WAITING = 'waiting'
+    STATE_PLAYING = 'playing'
+    STATE_PAUSED = 'paused'
+
     def __init__(self, config_file="config.json"):
         """Initialize the game with configuration"""
         # Load configuration
@@ -58,31 +64,14 @@ class LEDGame:
         self.joystick.init()
         print(f"🎮 Controller found: {self.joystick.get_name()}")
 
-        # Game variables
-        self.player_pos = self.led_config['count'] // 2
-        self.obstacles = []  # List of obstacle dictionaries: {'pos': int, 'color': tuple, 'button': int}
-        self.score = 0  # Starting score
-        self.running = True
-        self.pressed_buttons = set()  # Which buttons are pressed
-        self.button_press_time = {}  # When each button was pressed
-        self.button_duration = 1.0  # How long a button stays "active"
-
-        # Progression variables
-        self.obstacles_passed = 0  # Total obstacles passed
-        self.current_difficulty = 1  # Current difficulty level (no cap!)
-        self.spawn_interval = self.led_config['count'] // 2  # Start with 2 obstacles on strip (30 LEDs)
-        self.next_spawn_at = self.led_config['count'] - 1  # When next obstacle spawns
-        self.color_history = []  # Which colors were successfully dodged (for score display)
-
-        # Dynamic difficulty settings
-        self.base_speed = 0.25  # Starting speed slightly faster (was 0.3s)
-        self.current_speed = self.base_speed  # Current speed (gets faster gradually)
+        # Start button
+        self.start_button = self.game_config['buttons'].get('start', 9)
 
         # Color definition with button mapping (SNES layout)
         self.colors = {
-            'yellow': {'rgb': (255, 255, 0),   'button': self.game_config['buttons']['yellow']},  # Bright yellow
+            'yellow': {'rgb': (255, 255, 0),   'button': self.game_config['buttons']['yellow']},
             'red':    {'rgb': (255, 0, 0),     'button': self.game_config['buttons']['red']},
-            'green':  {'rgb': (0, 150, 0),     'button': self.game_config['buttons']['green']},   # Darker green
+            'green':  {'rgb': (0, 150, 0),     'button': self.game_config['buttons']['green']},
             'blue':   {'rgb': (0, 0, 255),     'button': self.game_config['buttons']['blue']}
         }
 
@@ -93,116 +82,107 @@ class LEDGame:
             self.game_config['player_color']['b']
         )
 
+        # Initialize game state
+        self.running = True
+        self.state = self.STATE_WAITING
+        self.reset_game()
+
+    def reset_game(self):
+        """Reset all game variables for a new game"""
+        self.player_pos = self.led_config['count'] // 2
+        self.obstacles = []
+        self.score = 0
+        self.pressed_buttons = set()
+        self.button_press_time = {}
+        self.button_duration = 1.0
+        self.obstacles_passed = 0
+        self.current_difficulty = 1
+        self.spawn_interval = self.led_config['count'] // 2
+        self.next_spawn_at = self.led_config['count'] - 1
+        self.color_history = []
+        self.base_speed = 0.25
+        self.current_speed = self.base_speed
+        self.last_update = time.time()
 
     def update_display(self):
         """Update the LED strip with current game state"""
-        # Clear everything
         self.strip.fill((0, 0, 0))
 
-        # Draw all obstacles with their color
+        # Draw all obstacles
         for obs in self.obstacles:
             if 0 <= obs['pos'] < self.led_config['count']:
                 self.strip[obs['pos']] = obs['color']
 
         # Draw player - only visible when NOT jumping
-        # If a button is pressed, the player is "in the air" (invisible)
         if len(self.pressed_buttons) == 0:
             self.strip[self.player_pos] = self.player_color
 
         self.strip.show()
 
+    def show_idle_animation(self):
+        """Show idle animation while waiting for start"""
+        t = time.time()
+        led_count = self.led_config['count']
+
+        # Moving dot animation
+        pos = int((t * 10) % led_count)
+
+        self.strip.fill((0, 0, 0))
+
+        # Draw a small trail
+        for i in range(3):
+            idx = (pos - i) % led_count
+            brightness = 255 - (i * 80)
+            self.strip[idx] = (brightness, brightness, brightness)
+
+        self.strip.show()
+
+    def show_pause_display(self):
+        """Show pause indicator"""
+        t = time.time()
+
+        # Blink player position slowly
+        if int(t * 2) % 2 == 0:
+            self.strip.fill((0, 0, 0))
+            # Show obstacles frozen in place
+            for obs in self.obstacles:
+                if 0 <= obs['pos'] < self.led_config['count']:
+                    self.strip[obs['pos']] = obs['color']
+            self.strip[self.player_pos] = self.player_color
+        else:
+            self.strip.fill((0, 0, 0))
+            # Show obstacles but dim
+            for obs in self.obstacles:
+                if 0 <= obs['pos'] < self.led_config['count']:
+                    r, g, b = obs['color']
+                    self.strip[obs['pos']] = (r // 4, g // 4, b // 4)
+
+        self.strip.show()
+
     def show_animation(self, color, duration=1.0, blink_count=3):
-        """Show an animation on all LEDs"""
+        """Show a blink animation on all LEDs"""
         blink_duration = duration / (blink_count * 2)
         anim_color = (color['r'], color['g'], color['b'])
 
         for _ in range(blink_count):
-            # On
             self.strip.fill(anim_color)
             self.strip.show()
             time.sleep(blink_duration)
 
-            # Off
             self.strip.fill((0, 0, 0))
             self.strip.show()
             time.sleep(blink_duration)
 
-    def press_button(self, button):
-        """Register button press"""
-        self.pressed_buttons.add(button)
-        self.button_press_time[button] = time.time()
-
-        # Print which color button was pressed (for feedback)
-        color_name = None
-        for name, data in self.colors.items():
-            if data['button'] == button:
-                color_name = name.upper()
-                break
-        if color_name:
-            print(f"🎮 Button {button} → {color_name} button pressed!")
-        else:
-            print(f"🎮 Button {button} pressed (unknown)")
-
-    def get_gradient_color(self, value, max_value):
-        """Calculate gradient color from green to red"""
-        # value 0.0 = green, 0.5 = yellow, 1.0 = red
-        ratio = min(value / max_value, 1.0) if max_value > 0 else 0
-
-        if ratio < 0.5:
-            # Green to yellow
-            r = int(255 * (ratio * 2))
-            g = 255
-            b = 0
-        else:
-            # Yellow to red
-            r = 255
-            g = int(255 * (1 - (ratio - 0.5) * 2))
-            b = 0
-
-        return (r, g, b)
-
-    def show_score_bar(self):
-        """Show score as bar graph with colored segments"""
-        # Clear strip
-        self.strip.fill((0, 0, 0))
-
-        # Calculate how many LEDs per point (dynamic scaling for high scores)
-        total_leds = self.led_config['count']
-
-        if self.score <= total_leds:
-            # 1 LED per point until we fill the strip
-            leds_to_light = self.score
-            for i in range(leds_to_light):
-                color = self.get_gradient_color(i, total_leds)
-                self.strip[i] = color
-        else:
-            # Score > LED count: scale so full strip = current score
-            # Each LED represents multiple points
-            points_per_led = self.score / total_leds
-
-            for i in range(total_leds):
-                # Color based on position
-                color = self.get_gradient_color(i, total_leds)
-                self.strip[i] = color
-
-        self.strip.show()
-
     def show_score_digits(self):
         """Show score as digits with color coding (10 LEDs per digit)"""
-        # Clear strip
         self.strip.fill((0, 0, 0))
 
-        # Purple for 0 (special pattern: on-off-on-off)
-        color_zero = (200, 0, 200)  # Purple
-
-        # Score to digits (left to right)
-        digits = [int(d) for d in str(self.score)]  # 157 -> [1, 5, 7]
+        color_zero = (200, 0, 200)  # Purple for 0
+        digits = [int(d) for d in str(self.score)]
 
         total_leds = self.led_config['count']
-        max_digits = total_leds // 10  # Max 6 digits on 60 LEDs
-        num_digits = len(digits)
+        max_digits = total_leds // 10
 
-        # Colors array (same order as game: yellow, red, green, blue)
         colors_palette = [
             (255, 255, 0),  # Yellow
             (255, 0, 0),    # Red
@@ -210,82 +190,65 @@ class LEDGame:
             (0, 0, 255),    # Blue
         ]
 
-        # Draw each digit (from left to right)
         for pos, digit in enumerate(digits):
             if pos >= max_digits:
-                break  # Too many digits for strip
+                break
 
-            # Start position for this digit
             start_led = pos * 10
 
             if digit == 0:
-                # Special pattern for 0: on-off-on-off-on-off-on-off-on-off
                 for i in range(10):
                     led_idx = start_led + i
-                    if led_idx < total_leds:
-                        if i % 2 == 0:  # Even positions = on
-                            self.strip[led_idx] = color_zero
-                        # Odd positions stay off (black)
+                    if led_idx < total_leds and i % 2 == 0:
+                        self.strip[led_idx] = color_zero
             else:
-                # Normal digit: first N LEDs on, rest off
-                # Choose color based on position from left
                 color_bright = colors_palette[pos % 4]
-
                 for i in range(10):
                     led_idx = start_led + i
-                    if led_idx < total_leds:
-                        if i < digit:
-                            # LED on
-                            self.strip[led_idx] = color_bright
-                        # Rest stays off (black)
+                    if led_idx < total_leds and i < digit:
+                        self.strip[led_idx] = color_bright
 
         self.strip.show()
 
     def show_score(self):
-        """Show score as colored digits on LED strip"""
-        # Print exact score in console
+        """Show final score and wait for start button to restart"""
         print(f"\n{'='*40}")
         print(f"🏆 FINAL SCORE: {self.score} points!")
         print(f"{'='*40}\n")
 
-        # Show digit display
         self.show_score_digits()
 
-        # Wait at least 3 seconds
-        print(f"Score displayed for 3 seconds...")
+        print("Score displayed for 3 seconds...")
         time.sleep(3.0)
 
-        # Clear event buffer (ignore buttons during score display)
         pygame.event.clear()
 
-        # Now wait for button press to restart
-        print(f"Press a color button to restart...")
-        waiting = True
-        while waiting:
-            pygame.event.pump()
-            for event in pygame.event.get():
-                if event.type == pygame.JOYBUTTONDOWN:
-                    # Check if it's a color button
-                    for color_data in self.colors.values():
-                        if event.button == color_data['button']:
-                            waiting = False
-                            break
-            time.sleep(0.1)
+    def press_button(self, button):
+        """Register button press"""
+        self.pressed_buttons.add(button)
+        self.button_press_time[button] = time.time()
+
+        color_name = None
+        for name, data in self.colors.items():
+            if data['button'] == button:
+                color_name = name.upper()
+                break
+        if color_name:
+            print(f"🎮 {color_name} button pressed!")
 
     def get_available_colors(self):
-        """Return available colors based on score (progressively adding)"""
+        """Return available colors based on score"""
         if self.score >= 18:
-            return ['yellow', 'red', 'green', 'blue']  # All 4 colors
+            return ['yellow', 'red', 'green', 'blue']
         elif self.score >= 12:
-            return ['yellow', 'red', 'green']  # 3 colors
+            return ['yellow', 'red', 'green']
         elif self.score >= 6:
-            return ['yellow', 'red']  # 2 colors
+            return ['yellow', 'red']
         else:
-            return ['yellow']  # Only yellow (start)
+            return ['yellow']
 
     def update_difficulty(self):
         """Update difficulty level based on score"""
-        # Fast start progression, then gradual
         if self.score <= 2:
             new_difficulty = 1
         elif self.score <= 5:
@@ -297,26 +260,17 @@ class LEDGame:
         elif self.score <= 20:
             new_difficulty = 5
         else:
-            # After score 20: every 8 points +1 level
             new_difficulty = 5 + ((self.score - 20) // 8)
 
         if new_difficulty > self.current_difficulty:
-            old_difficulty = self.current_difficulty
             self.current_difficulty = new_difficulty
-
-            # Update spawn interval (minimum 3 LEDs apart)
             self.spawn_interval = max(3, self.led_config['count'] // self.current_difficulty)
-
-            # Update speed (gets faster: 0.3 → 0.05s minimum)
-            # Each level: -0.015s faster
             self.current_speed = max(0.05, self.base_speed - (self.current_difficulty * 0.015))
 
-            # Extended feedback
             print(f"⚡ Level {self.current_difficulty}!")
             print(f"   📏 Interval: {self.spawn_interval} LEDs")
             print(f"   ⏱️  Speed: {self.current_speed:.3f}s")
 
-        # Check for new colors
         available_colors = self.get_available_colors()
         if len(available_colors) == 2 and self.score == 6:
             print(f"🎨 New color! Red added - use B button!")
@@ -325,75 +279,72 @@ class LEDGame:
         elif len(available_colors) == 4 and self.score == 18:
             print(f"🎨 New color! Blue added - use X button!")
 
-    def should_spawn_obstacle(self):
-        """Check if we should spawn a new obstacle"""
-        # Check if there's already an obstacle at spawn position (prevents overlap)
+    def spawn_obstacle(self):
+        """Spawn a new obstacle"""
         spawn_pos = self.led_config['count'] - 1
+
+        # Check if spawn position is free
         for obs in self.obstacles:
             if obs['pos'] == spawn_pos:
-                return False
-        return True
+                return
 
-    def spawn_obstacle(self):
-        """Spawn 1 new obstacle with random color at the start of the strip"""
-        if self.should_spawn_obstacle():
-            import random
+        available_colors = self.get_available_colors()
+        color_name = random.choice(available_colors)
+        color_data = self.colors[color_name]
 
-            # Choose random color from available colors
-            available_colors = self.get_available_colors()
-            color_name = random.choice(available_colors)
-            color_data = self.colors[color_name]
+        obstacle = {
+            'pos': spawn_pos,
+            'color': color_data['rgb'],
+            'button': color_data['button'],
+            'color_name': color_name
+        }
 
-            # Create obstacle object
-            obstacle = {
-                'pos': self.led_config['count'] - 1,
-                'color': color_data['rgb'],
-                'button': color_data['button'],
-                'color_name': color_name
-            }
-
-            self.obstacles.append(obstacle)
-            self.next_spawn_at = obstacle['pos'] - self.spawn_interval
+        self.obstacles.append(obstacle)
+        self.next_spawn_at = obstacle['pos'] - self.spawn_interval
 
     def game_over(self):
-        """Game over animation"""
+        """Handle game over"""
         print(f"❌ Hit! Final score: {self.score}")
 
-        # First: red blinking (fail animation)
         self.show_animation(self.game_config['fail_color'], 1.0, 3)
 
-        # Then: show score
         if self.score > 0:
             self.show_score()
 
-        # Reset for new game
-        self.score = 0
-        self.obstacles = []
-        self.obstacles_passed = 0
-        self.current_difficulty = 1
-        self.spawn_interval = self.led_config['count'] // 2  # Start with 2 obstacles (30 LEDs)
-        self.next_spawn_at = self.led_config['count'] - 1
-        self.pressed_buttons = set()
-        self.button_press_time = {}
-        self.color_history = []  # Reset color history
-        self.current_speed = self.base_speed  # Reset speed
+        self.reset_game()
+        self.state = self.STATE_WAITING
+        print("\n⏸️  Press START to play again...")
 
     def handle_input(self):
         """Process controller input"""
         pygame.event.pump()
 
         for event in pygame.event.get():
-            # Button pressed - register color button
             if event.type == pygame.JOYBUTTONDOWN:
-                # Check if it's one of the color buttons
-                for color_data in self.colors.values():
-                    if event.button == color_data['button']:
-                        self.press_button(event.button)
-                        break
+                # Start button handling
+                if event.button == self.start_button:
+                    if self.state == self.STATE_WAITING:
+                        self.state = self.STATE_PLAYING
+                        self.last_update = time.time()
+                        print("\n🎮 Game started!")
+                    elif self.state == self.STATE_PLAYING:
+                        self.state = self.STATE_PAUSED
+                        print("\n⏸️  PAUSED - Press START to resume")
+                    elif self.state == self.STATE_PAUSED:
+                        self.state = self.STATE_PLAYING
+                        self.last_update = time.time()
+                        print("\n▶️  RESUMED")
+
+                # Color button handling (only when playing)
+                elif self.state == self.STATE_PLAYING:
+                    for color_data in self.colors.values():
+                        if event.button == color_data['button']:
+                            self.press_button(event.button)
+                            break
 
     def update_obstacles(self):
         """Move all obstacles and check collision"""
-        # Update button press status (expire old presses)
+        # Expire old button presses
         current_time = time.time()
         expired_buttons = []
         for button, press_time in self.button_press_time.items():
@@ -404,30 +355,26 @@ class LEDGame:
             self.pressed_buttons.discard(button)
             del self.button_press_time[button]
 
-        # Move all obstacles 1 position to the left
+        # Move obstacles
         for obs in self.obstacles:
             obs['pos'] -= 1
 
-        # Check if we need to spawn new obstacle (continuous flow!)
+        # Spawn new obstacle if needed
         if len(self.obstacles) == 0 or self.obstacles[-1]['pos'] <= self.next_spawn_at:
             self.spawn_obstacle()
 
-        # Check collision with all obstacles
-        for obs in self.obstacles[:]:  # Copy list to allow removal during iteration
+        # Check collision
+        for obs in self.obstacles[:]:
             if obs['pos'] == self.player_pos:
-                # Obstacle is EXACTLY on player!
-                # Check if correct button is pressed
                 if obs['button'] in self.pressed_buttons:
-                    # Correct color! Safe! Save color for score display
                     print(f"✅ {obs['color_name'].upper()} - Well done!")
                     self.color_history.append(obs['color'])
                 else:
-                    # Wrong button or not pressed - hit!
                     print(f"💥 Missed! Should have pressed {obs['color_name'].upper()} button!")
                     self.game_over()
                     return
 
-        # Count obstacles that passed and remove them
+        # Remove passed obstacles and update score
         before_count = len(self.obstacles)
         self.obstacles = [obs for obs in self.obstacles if obs['pos'] >= 0]
         obstacles_passed = before_count - len(self.obstacles)
@@ -436,37 +383,38 @@ class LEDGame:
             self.obstacles_passed += obstacles_passed
             self.score += 1
             print(f"✅ Score: {self.score}")
-            self.update_difficulty()  # Check if difficulty should increase
+            self.update_difficulty()
 
     def run(self):
-        """Start the game loop"""
-        print("\n🎮 LED Runner started!")
+        """Main game loop"""
+        print("\n🎮 LED Runner")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("SNES Controller:")
-        print("  🟡 Y button (top) = Yellow obstacles")
-        print("  🔴 B button (right) = Red obstacles")
-        print("  🟢 A button (bottom) = Green obstacles")
-        print("  🔵 X button (left) = Blue obstacles")
-        print("\nPress the correct color button for each obstacle!")
-        print("Press CTRL+C to stop\n")
+        print("Controls:")
+        print("  START = Start / Pause / Resume")
+        print("  🟡 Y = Yellow")
+        print("  🔴 B = Red")
+        print("  🟢 A = Green")
+        print("  🔵 X = Blue")
+        print("\nPress START to begin!")
+        print("Press CTRL+C to quit\n")
 
         try:
-            last_update = time.time()
-
             while self.running:
-                # Handle input
                 self.handle_input()
 
-                # Update obstacle positions on interval (use dynamic speed!)
-                current_time = time.time()
-                if current_time - last_update >= self.current_speed:
-                    self.update_obstacles()
-                    last_update = current_time
+                if self.state == self.STATE_WAITING:
+                    self.show_idle_animation()
 
-                # Update display
-                self.update_display()
+                elif self.state == self.STATE_PLAYING:
+                    current_time = time.time()
+                    if current_time - self.last_update >= self.current_speed:
+                        self.update_obstacles()
+                        self.last_update = current_time
+                    self.update_display()
 
-                # Small delay to save CPU
+                elif self.state == self.STATE_PAUSED:
+                    self.show_pause_display()
+
                 time.sleep(0.01)
 
         except KeyboardInterrupt:
