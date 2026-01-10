@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 LED Runner - Simple reaction game on an LED strip
+Supports 1-4 players co-op
 """
 
 import time
@@ -54,28 +55,43 @@ class LEDGame:
             print(f"   Are you running the script with sudo?")
             exit(1)
 
-        # Setup pygame and controller
+        # Setup pygame and controllers
         pygame.init()
-        if pygame.joystick.get_count() == 0:
+
+        num_joysticks = pygame.joystick.get_count()
+        if num_joysticks == 0:
             print("⚠️  No controller found! Connect a controller.")
             exit(1)
 
-        self.joystick = pygame.joystick.Joystick(0)
-        self.joystick.init()
-        print(f"🎮 Controller found: {self.joystick.get_name()}")
+        # Initialize all connected controllers (max 4)
+        self.joysticks = []
+        for i in range(min(num_joysticks, 4)):
+            js = pygame.joystick.Joystick(i)
+            js.init()
+            self.joysticks.append(js)
+            print(f"🎮 Controller {i + 1}: {js.get_name()}")
+
+        # Determine player count (1-4)
+        self.num_players = len(self.joysticks)
 
         # Start button
         self.start_button = self.game_config['buttons'].get('start', 9)
 
-        # Color definition with button mapping (SNES layout)
-        self.colors = {
-            'yellow': {'rgb': (255, 255, 0),   'button': self.game_config['buttons']['yellow']},
-            'red':    {'rgb': (255, 0, 0),     'button': self.game_config['buttons']['red']},
-            'green':  {'rgb': (0, 150, 0),     'button': self.game_config['buttons']['green']},
-            'blue':   {'rgb': (0, 0, 255),     'button': self.game_config['buttons']['blue']}
+        # Base color definitions
+        self.color_defs = {
+            'yellow': {'rgb': (255, 255, 0), 'button': self.game_config['buttons']['yellow']},
+            'red': {'rgb': (255, 0, 0), 'button': self.game_config['buttons']['red']},
+            'green': {'rgb': (0, 150, 0), 'button': self.game_config['buttons']['green']},
+            'blue': {'rgb': (0, 0, 255), 'button': self.game_config['buttons']['blue']}
         }
 
-        # Cache player color
+        # Assign colors to players based on player count
+        self.colors = self.assign_colors_to_players()
+
+        # Print mode info
+        self.print_mode_info()
+
+        # Cache player color (white)
         self.player_color = (
             self.game_config['player_color']['r'],
             self.game_config['player_color']['g'],
@@ -85,15 +101,68 @@ class LEDGame:
         # Initialize game
         self.running = True
         self.reset_game()
-        self.state = self.STATE_PLAYING  # Start immediately
+        self.state = self.STATE_PLAYING
+
+    def assign_colors_to_players(self):
+        """Assign colors to players based on player count"""
+        colors = {}
+
+        if self.num_players == 1:
+            # 1 player: all colors
+            for color_name, color_def in self.color_defs.items():
+                colors[color_name] = {
+                    'rgb': color_def['rgb'],
+                    'button': color_def['button'],
+                    'player': 0
+                }
+        elif self.num_players == 2:
+            # 2 players: P1=yellow+red, P2=green+blue
+            colors['yellow'] = {'rgb': self.color_defs['yellow']['rgb'], 'button': self.color_defs['yellow']['button'], 'player': 0}
+            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 0}
+            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 1}
+            colors['blue'] = {'rgb': self.color_defs['blue']['rgb'], 'button': self.color_defs['blue']['button'], 'player': 1}
+        elif self.num_players == 3:
+            # 3 players: P1=yellow, P2=red, P3=green+blue
+            colors['yellow'] = {'rgb': self.color_defs['yellow']['rgb'], 'button': self.color_defs['yellow']['button'], 'player': 0}
+            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 1}
+            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 2}
+            colors['blue'] = {'rgb': self.color_defs['blue']['rgb'], 'button': self.color_defs['blue']['button'], 'player': 2}
+        else:
+            # 4 players: each player 1 color
+            colors['yellow'] = {'rgb': self.color_defs['yellow']['rgb'], 'button': self.color_defs['yellow']['button'], 'player': 0}
+            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 1}
+            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 2}
+            colors['blue'] = {'rgb': self.color_defs['blue']['rgb'], 'button': self.color_defs['blue']['button'], 'player': 3}
+
+        return colors
+
+    def print_mode_info(self):
+        """Print game mode information"""
+        if self.num_players == 1:
+            print("\n👤 Single player mode")
+            print("   (Connect more controllers for co-op)")
+        elif self.num_players == 2:
+            print("\n👥 Co-op mode (2 players)")
+            print("   P1: 🟡 Yellow + 🔴 Red")
+            print("   P2: 🟢 Green + 🔵 Blue")
+        elif self.num_players == 3:
+            print("\n👥 Co-op mode (3 players)")
+            print("   P1: 🟡 Yellow")
+            print("   P2: 🔴 Red")
+            print("   P3: 🟢 Green + 🔵 Blue")
+        else:
+            print("\n👥 Co-op mode (4 players)")
+            print("   P1: 🟡 Yellow")
+            print("   P2: 🔴 Red")
+            print("   P3: 🟢 Green")
+            print("   P4: 🔵 Blue")
 
     def reset_game(self):
         """Reset all game variables for a new game"""
         self.player_pos = self.led_config['count'] // 2
         self.obstacles = []
         self.score = 0
-        self.pressed_buttons = set()
-        self.button_press_time = {}
+        self.pressed_buttons = {}
         self.button_duration = 1.0
         self.obstacles_passed = 0
         self.current_difficulty = 1
@@ -108,12 +177,10 @@ class LEDGame:
         """Update the LED strip with current game state"""
         self.strip.fill((0, 0, 0))
 
-        # Draw all obstacles
         for obs in self.obstacles:
             if 0 <= obs['pos'] < self.led_config['count']:
                 self.strip[obs['pos']] = obs['color']
 
-        # Draw player - only visible when NOT jumping
         if len(self.pressed_buttons) == 0:
             self.strip[self.player_pos] = self.player_color
 
@@ -156,17 +223,17 @@ class LEDGame:
         """Show score as digits with color coding (10 LEDs per digit)"""
         self.strip.fill((0, 0, 0))
 
-        color_zero = (200, 0, 200)  # Purple for 0
+        color_zero = (200, 0, 200)
         digits = [int(d) for d in str(self.score)]
 
         total_leds = self.led_config['count']
         max_digits = total_leds // 10
 
         colors_palette = [
-            (255, 255, 0),  # Yellow
-            (255, 0, 0),    # Red
-            (0, 255, 0),    # Green
-            (0, 0, 255),    # Blue
+            (255, 255, 0),
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
         ]
 
         for pos, digit in enumerate(digits):
@@ -189,29 +256,56 @@ class LEDGame:
 
         self.strip.show()
 
-    def press_button(self, button):
-        """Register button press"""
-        self.pressed_buttons.add(button)
-        self.button_press_time[button] = time.time()
+    def press_button(self, player_idx, button, color_name):
+        """Register button press for a specific player"""
+        key = (player_idx, button)
+        self.pressed_buttons[key] = time.time()
 
-        color_name = None
-        for name, data in self.colors.items():
-            if data['button'] == button:
-                color_name = name.upper()
-                break
-        if color_name:
-            print(f"🎮 {color_name} button pressed!")
+        if self.num_players > 1:
+            print(f"P{player_idx + 1} {color_name.upper()}!")
+        else:
+            print(f"🎮 {color_name.upper()}!")
+
+    def is_button_pressed(self, required_player, button):
+        """Check if the correct player has the button pressed"""
+        if self.num_players == 1:
+            for (player_idx, btn), _ in self.pressed_buttons.items():
+                if btn == button:
+                    return True
+            return False
+
+        key = (required_player, button)
+        return key in self.pressed_buttons
 
     def get_available_colors(self):
-        """Return available colors based on score"""
-        if self.score >= 18:
-            return ['yellow', 'red', 'green', 'blue']
-        elif self.score >= 12:
-            return ['yellow', 'red', 'green']
-        elif self.score >= 6:
-            return ['yellow', 'red']
+        """Return available colors based on score and player count"""
+        if self.num_players == 1:
+            # Single player: progressive unlock
+            if self.score >= 18:
+                return ['yellow', 'red', 'green', 'blue']
+            elif self.score >= 12:
+                return ['yellow', 'red', 'green']
+            elif self.score >= 6:
+                return ['yellow', 'red']
+            else:
+                return ['yellow']
+        elif self.num_players == 2:
+            # 2 players: start with 1 each, unlock second color
+            if self.score >= 6:
+                return ['yellow', 'red', 'green', 'blue']
+            elif self.score >= 3:
+                return ['yellow', 'red', 'green']
+            else:
+                return ['yellow', 'green']
+        elif self.num_players == 3:
+            # 3 players: start with 1 each, P3 gets second color later
+            if self.score >= 6:
+                return ['yellow', 'red', 'green', 'blue']
+            else:
+                return ['yellow', 'red', 'green']
         else:
-            return ['yellow']
+            # 4 players: all colors from start
+            return ['yellow', 'red', 'green', 'blue']
 
     def update_difficulty(self):
         """Update difficulty level based on score"""
@@ -234,16 +328,24 @@ class LEDGame:
             self.current_speed = max(0.05, self.base_speed - (self.current_difficulty * 0.015))
 
             print(f"⚡ Level {self.current_difficulty}!")
-            print(f"   📏 Interval: {self.spawn_interval} LEDs")
-            print(f"   ⏱️  Speed: {self.current_speed:.3f}s")
 
-        available_colors = self.get_available_colors()
-        if len(available_colors) == 2 and self.score == 6:
-            print(f"🎨 New color! Red added - use B button!")
-        elif len(available_colors) == 3 and self.score == 12:
-            print(f"🎨 New color! Green added - use A button!")
-        elif len(available_colors) == 4 and self.score == 18:
-            print(f"🎨 New color! Blue added - use X button!")
+        # Announce new colors based on player count
+        available = self.get_available_colors()
+        if self.num_players == 1:
+            if len(available) == 2 and self.score == 6:
+                print(f"🎨 +Red!")
+            elif len(available) == 3 and self.score == 12:
+                print(f"🎨 +Green!")
+            elif len(available) == 4 and self.score == 18:
+                print(f"🎨 +Blue!")
+        elif self.num_players == 2:
+            if len(available) == 3 and self.score == 3:
+                print(f"🎨 +Red (P1)!")
+            elif len(available) == 4 and self.score == 6:
+                print(f"🎨 +Blue (P2)!")
+        elif self.num_players == 3:
+            if len(available) == 4 and self.score == 6:
+                print(f"🎨 +Blue (P3)!")
 
     def spawn_obstacle(self):
         """Spawn a new obstacle"""
@@ -261,6 +363,7 @@ class LEDGame:
             'pos': spawn_pos,
             'color': color_data['rgb'],
             'button': color_data['button'],
+            'player': color_data['player'],
             'color_name': color_name
         }
 
@@ -269,30 +372,35 @@ class LEDGame:
 
     def game_over(self):
         """Handle game over"""
-        print(f"❌ Hit! Final score: {self.score}")
+        print(f"❌ Game Over! Score: {self.score}")
 
         self.show_animation(self.game_config['fail_color'], 1.0, 3)
 
-        # Show score
         print(f"\n{'='*40}")
-        print(f"🏆 FINAL SCORE: {self.score} points!")
+        print(f"🏆 FINAL SCORE: {self.score}")
         print(f"{'='*40}")
-        print(f"\n⏸️  Press START for new game...")
+        print(f"\nPress START for new game...")
 
         self.show_score_digits()
         self.state = self.STATE_GAME_OVER
 
     def handle_input(self):
-        """Process controller input"""
+        """Process controller input from all players"""
         pygame.event.pump()
 
         for event in pygame.event.get():
             if event.type == pygame.JOYBUTTONDOWN:
-                # Start button handling
+                joy_id = event.joy
+
+                # Ignore controllers beyond player count
+                if joy_id >= self.num_players:
+                    continue
+
+                # Start button (any controller)
                 if event.button == self.start_button:
                     if self.state == self.STATE_PLAYING:
                         self.state = self.STATE_PAUSED
-                        print("\n⏸️  PAUSED - Press START to resume")
+                        print("\n⏸️  PAUSED")
                     elif self.state == self.STATE_PAUSED:
                         self.state = self.STATE_PLAYING
                         self.last_update = time.time()
@@ -300,48 +408,51 @@ class LEDGame:
                     elif self.state == self.STATE_GAME_OVER:
                         self.reset_game()
                         self.state = self.STATE_PLAYING
-                        print("\n🎮 New game started!")
+                        print("\n🎮 New game!")
 
-                # Color button handling (only when playing)
+                # Color buttons (only when playing)
                 elif self.state == self.STATE_PLAYING:
-                    for color_data in self.colors.values():
+                    for color_name, color_data in self.colors.items():
                         if event.button == color_data['button']:
-                            self.press_button(event.button)
+                            required_player = color_data['player']
+
+                            if self.num_players == 1:
+                                self.press_button(joy_id, event.button, color_name)
+                            elif joy_id == required_player:
+                                self.press_button(joy_id, event.button, color_name)
                             break
 
     def update_obstacles(self):
         """Move all obstacles and check collision"""
-        # Expire old button presses
         current_time = time.time()
-        expired_buttons = []
-        for button, press_time in self.button_press_time.items():
-            if current_time - press_time > self.button_duration:
-                expired_buttons.append(button)
+        expired = [key for key, press_time in self.pressed_buttons.items()
+                   if current_time - press_time > self.button_duration]
+        for key in expired:
+            del self.pressed_buttons[key]
 
-        for button in expired_buttons:
-            self.pressed_buttons.discard(button)
-            del self.button_press_time[button]
-
-        # Move obstacles
         for obs in self.obstacles:
             obs['pos'] -= 1
 
-        # Spawn new obstacle if needed
         if len(self.obstacles) == 0 or self.obstacles[-1]['pos'] <= self.next_spawn_at:
             self.spawn_obstacle()
 
-        # Check collision
         for obs in self.obstacles[:]:
             if obs['pos'] == self.player_pos:
-                if obs['button'] in self.pressed_buttons:
-                    print(f"✅ {obs['color_name'].upper()} - Well done!")
+                required_player = obs['player']
+                if self.is_button_pressed(required_player, obs['button']):
+                    if self.num_players > 1:
+                        print(f"✅ P{required_player + 1} {obs['color_name'].upper()}")
+                    else:
+                        print(f"✅ {obs['color_name'].upper()}")
                     self.color_history.append(obs['color'])
                 else:
-                    print(f"💥 Missed! Should have pressed {obs['color_name'].upper()} button!")
+                    if self.num_players > 1:
+                        print(f"💥 P{required_player + 1} missed {obs['color_name'].upper()}!")
+                    else:
+                        print(f"💥 Missed {obs['color_name'].upper()}!")
                     self.game_over()
                     return
 
-        # Remove passed obstacles and update score
         before_count = len(self.obstacles)
         self.obstacles = [obs for obs in self.obstacles if obs['pos'] >= 0]
         obstacles_passed = before_count - len(self.obstacles)
@@ -349,21 +460,16 @@ class LEDGame:
         if obstacles_passed > 0:
             self.obstacles_passed += obstacles_passed
             self.score += 1
-            print(f"✅ Score: {self.score}")
+            print(f"Score: {self.score}")
             self.update_difficulty()
 
     def run(self):
         """Main game loop"""
         print("\n🎮 LED Runner")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("Controls:")
-        print("  START = Pause / Resume / New game")
-        print("  🟡 Y = Yellow")
-        print("  🔴 B = Red")
-        print("  🟢 A = Green")
-        print("  🔵 X = Blue")
+        print("START = Pause / Resume / New game")
         print("\nGame starting...")
-        print("Press CTRL+C to quit\n")
+        print("CTRL+C to quit\n")
 
         try:
             while self.running:
@@ -381,13 +487,12 @@ class LEDGame:
                     self.show_pause_display()
 
                 elif self.state == self.STATE_GAME_OVER:
-                    # Score stays displayed, just wait for input
                     pass
 
                 time.sleep(0.01)
 
         except KeyboardInterrupt:
-            print(f"\n\n👋 Game stopped. Final score: {self.score}")
+            print(f"\n\n👋 Stopped. Score: {self.score}")
         finally:
             self.strip.fill((0, 0, 0))
             self.strip.show()
