@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simpele LED test - test of de strip werkt
+Simple LED test - test if the strip works
 """
 
 import time
@@ -9,7 +9,7 @@ import neopixel
 import json
 import sys
 
-# Laad configuratie
+# Load configuration
 try:
     with open('config.json', 'r') as f:
         config = json.load(f)
@@ -18,10 +18,10 @@ try:
     GPIO_PIN = config['led'].get('pin', 18)
     LED_BRIGHTNESS = config['led']['brightness'] / 255.0
 except FileNotFoundError:
-    print("❌ config.json niet gevonden!")
+    print("❌ config.json not found!")
     sys.exit(1)
 except Exception as e:
-    print(f"❌ Fout bij lezen config.json: {e}")
+    print(f"❌ Error reading config.json: {e}")
     sys.exit(1)
 
 # GPIO pin mapping
@@ -33,11 +33,11 @@ gpio_map = {
 }
 
 if GPIO_PIN not in gpio_map:
-    print(f"❌ Ongeldige GPIO pin in config.json: {GPIO_PIN}")
-    print(f"   Gebruik: 12, 13, 18 of 21")
+    print(f"❌ Invalid GPIO pin in config.json: {GPIO_PIN}")
+    print(f"   Use: 12, 13, 18 or 21")
     sys.exit(1)
 
-print(f"🔧 Initialiseer LED strip...")
+print(f"🔧 Initializing LED strip...")
 print(f"   LEDs: {LED_COUNT}")
 print(f"   GPIO Pin: {GPIO_PIN}")
 print(f"   Brightness: {int(LED_BRIGHTNESS * 255)}/255")
@@ -50,15 +50,15 @@ try:
         auto_write=False,
         pixel_order=neopixel.GRB
     )
-    print(f"✅ LED strip geïnitialiseerd op GPIO {GPIO_PIN}\n")
+    print(f"✅ LED strip initialized on GPIO {GPIO_PIN}\n")
 except Exception as e:
-    print(f"❌ Fout bij initialiseren: {e}")
-    print(f"   Draai je het script met sudo?")
+    print(f"❌ Error initializing: {e}")
+    print(f"   Are you running the script with sudo?")
     sys.exit(1)
 
 try:
-    # Test 1: Alle LEDs wit (volle kracht)
-    print("Test 1: Alle LEDs WIT (RGB: 255,255,255)")
+    # Test 1: All LEDs white (full power)
+    print("Test 1: All LEDs WHITE (RGB: 255,255,255)")
     strip.fill((255, 255, 255))
     strip.show()
     time.sleep(2)
@@ -68,8 +68,8 @@ try:
     strip.show()
     time.sleep(0.5)
 
-    # Test 2: Rood
-    print("Test 2: Alle LEDs ROOD (RGB: 255,0,0)")
+    # Test 2: Red
+    print("Test 2: All LEDs RED (RGB: 255,0,0)")
     strip.fill((255, 0, 0))
     strip.show()
     time.sleep(2)
@@ -79,8 +79,8 @@ try:
     strip.show()
     time.sleep(0.5)
 
-    # Test 3: Groen
-    print("Test 3: Alle LEDs GROEN (RGB: 0,255,0)")
+    # Test 3: Green
+    print("Test 3: All LEDs GREEN (RGB: 0,255,0)")
     strip.fill((0, 255, 0))
     strip.show()
     time.sleep(2)
@@ -90,8 +90,8 @@ try:
     strip.show()
     time.sleep(0.5)
 
-    # Test 4: Blauw
-    print("Test 4: Alle LEDs BLAUW (RGB: 0,0,255)")
+    # Test 4: Blue
+    print("Test 4: All LEDs BLUE (RGB: 0,0,255)")
     strip.fill((0, 0, 255))
     strip.show()
     time.sleep(2)
@@ -102,7 +102,7 @@ try:
     time.sleep(0.5)
 
     # Test 5: Running light
-    print("Test 5: Running light (wit)")
+    print("Test 5: Running light (white)")
     for i in range(LED_COUNT):
         # Clear previous
         if i > 0:
@@ -117,13 +117,13 @@ try:
     strip.fill((0, 0, 0))
     strip.show()
 
-    print("\n✅ Test compleet!")
+    print("\n✅ Test complete!")
 
 except KeyboardInterrupt:
-    print("\n\n⏹️  Test gestopt")
+    print("\n\n⏹️  Test stopped")
 
 finally:
     # Clear all LEDs
     strip.fill((0, 0, 0))
     strip.show()
-    print("LEDs uitgeschakeld")
+    print("LEDs turned off")

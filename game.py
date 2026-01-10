@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """
-LED Strip Game - Simpel reactiespel op een LED strip
+LED Runner - Simple reaction game on an LED strip
+Supports 1-4 players co-op
 """
 
 import time
+import random
+import signal
+import sys
 import pygame
 import board
 import neopixel
@@ -11,9 +15,14 @@ import json
 
 
 class LEDGame:
+    # Game states
+    STATE_PLAYING = 'playing'
+    STATE_PAUSED = 'paused'
+    STATE_GAME_OVER = 'game_over'
+
     def __init__(self, config_file="config.json"):
-        """Initialiseer het spel met configuratie"""
-        # Laad configuratie
+        """Initialize the game with configuration"""
+        # Load configuration
         with open(config_file, 'r') as f:
             config = json.load(f)
 
@@ -30,8 +39,8 @@ class LEDGame:
 
         gpio_pin = self.led_config.get('pin', 18)
         if gpio_pin not in gpio_map:
-            print(f"❌ Ongeldige GPIO pin: {gpio_pin}")
-            print(f"   Gebruik: 12, 13, 18 of 21")
+            print(f"❌ Invalid GPIO pin: {gpio_pin}")
+            print(f"   Use: 12, 13, 18 or 21")
             exit(1)
 
         # Setup LED strip
@@ -44,248 +53,289 @@ class LEDGame:
                 pixel_order=neopixel.GRB
             )
         except Exception as e:
-            print(f"❌ Fout bij initialiseren LED strip: {e}")
-            print(f"   Draai je het script met sudo?")
+            print(f"❌ Error initializing LED strip: {e}")
+            print(f"   Are you running the script with sudo?")
             exit(1)
 
-        # Setup pygame en controller
+        # Setup pygame
         pygame.init()
-        if pygame.joystick.get_count() == 0:
-            print("⚠️  Geen controller gevonden! Sluit een controller aan.")
-            exit(1)
 
-        self.joystick = pygame.joystick.Joystick(0)
-        self.joystick.init()
-        print(f"🎮 Controller gevonden: {self.joystick.get_name()}")
+        # Start button
+        self.start_button = self.game_config['buttons'].get('start', 9)
 
-        # Spel variabelen
-        self.player_pos = self.led_config['count'] // 2
-        self.obstacles = []  # List van obstakel dictionaries: {'pos': int, 'color': tuple, 'button': int}
-        self.score = 0  # Start score
-        self.running = True
-        self.pressed_buttons = set()  # Welke knoppen zijn ingedrukt
-        self.button_press_time = {}  # Wanneer elke knop werd ingedrukt
-        self.button_duration = 1.0  # Hoe lang een knop "actief" blijft
-
-        # Progressie variabelen
-        self.obstacles_passed = 0  # Totaal aantal gepasseerde obstakels
-        self.current_difficulty = 1  # Huidige moeilijkheidsgraad (geen cap!)
-        self.spawn_interval = self.led_config['count'] // 2  # Start met 2 obstacles op strip (30 LEDs)
-        self.next_spawn_at = self.led_config['count'] - 1  # Wanneer volgende obstakel spawnt
-        self.color_history = []  # Welke kleuren zijn succesvol gedodged (voor score display)
-
-        # Dynamic difficulty settings
-        self.base_speed = 0.25  # Start snelheid iets sneller (was 0.3s)
-        self.current_speed = self.base_speed  # Huidige snelheid (wordt langzaam sneller)
-
-        # Kleur definitie met button mapping (SNES layout)
-        self.colors = {
-            'yellow': {'rgb': (255, 255, 0),   'button': self.game_config['buttons']['yellow']},  # Helder geel
-            'red':    {'rgb': (255, 0, 0),     'button': self.game_config['buttons']['red']},
-            'green':  {'rgb': (0, 150, 0),     'button': self.game_config['buttons']['green']},   # Donkerder groen
-            'blue':   {'rgb': (0, 0, 255),     'button': self.game_config['buttons']['blue']}
+        # Base color definitions
+        self.color_defs = {
+            'yellow': {'rgb': (255, 255, 0), 'button': self.game_config['buttons']['yellow']},
+            'red': {'rgb': (255, 0, 0), 'button': self.game_config['buttons']['red']},
+            'green': {'rgb': (0, 150, 0), 'button': self.game_config['buttons']['green']},
+            'blue': {'rgb': (0, 0, 255), 'button': self.game_config['buttons']['blue']}
         }
 
-        # Cache speler kleur
+        # Detect controllers (will exit if none found)
+        self.joysticks = []
+        self.num_players = 0
+        self.colors = {}
+        self.detect_controllers(initial=True)
+
+        # Cache player color (white)
         self.player_color = (
             self.game_config['player_color']['r'],
             self.game_config['player_color']['g'],
             self.game_config['player_color']['b']
         )
 
+        # Initialize game
+        self.running = True
+        self.reset_game()
+        self.state = self.STATE_PLAYING
+
+    def detect_controllers(self, initial=False):
+        """Detect and initialize controllers"""
+        # Quit existing joysticks
+        for js in self.joysticks:
+            js.quit()
+
+        # Re-init joystick module to detect changes
+        pygame.joystick.quit()
+        pygame.joystick.init()
+
+        num_joysticks = pygame.joystick.get_count()
+
+        if num_joysticks == 0:
+            if initial:
+                print("⚠️  No controller found! Connect a controller.")
+                exit(1)
+            else:
+                print("⚠️  No controller found! Connect a controller and press START.")
+                return False
+
+        # Initialize all connected controllers (max 4)
+        old_num_players = self.num_players
+        self.joysticks = []
+        for i in range(min(num_joysticks, 4)):
+            js = pygame.joystick.Joystick(i)
+            js.init()
+            self.joysticks.append(js)
+            print(f"🎮 Controller {i + 1}: {js.get_name()}")
+
+        # Update player count
+        self.num_players = len(self.joysticks)
+
+        # Reassign colors
+        self.colors = self.assign_colors_to_players()
+
+        # Print mode info if changed or initial
+        if initial or self.num_players != old_num_players:
+            self.print_mode_info()
+
+        return True
+
+    def assign_colors_to_players(self):
+        """Assign colors to players based on player count"""
+        colors = {}
+
+        if self.num_players == 1:
+            # 1 player: all colors
+            for color_name, color_def in self.color_defs.items():
+                colors[color_name] = {
+                    'rgb': color_def['rgb'],
+                    'button': color_def['button'],
+                    'player': 0
+                }
+        elif self.num_players == 2:
+            # 2 players: P1=yellow+red, P2=green+blue
+            colors['yellow'] = {'rgb': self.color_defs['yellow']['rgb'], 'button': self.color_defs['yellow']['button'], 'player': 0}
+            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 0}
+            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 1}
+            colors['blue'] = {'rgb': self.color_defs['blue']['rgb'], 'button': self.color_defs['blue']['button'], 'player': 1}
+        elif self.num_players == 3:
+            # 3 players: P1=yellow, P2=red, P3=green+blue
+            colors['yellow'] = {'rgb': self.color_defs['yellow']['rgb'], 'button': self.color_defs['yellow']['button'], 'player': 0}
+            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 1}
+            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 2}
+            colors['blue'] = {'rgb': self.color_defs['blue']['rgb'], 'button': self.color_defs['blue']['button'], 'player': 2}
+        else:
+            # 4 players: each player 1 color
+            colors['yellow'] = {'rgb': self.color_defs['yellow']['rgb'], 'button': self.color_defs['yellow']['button'], 'player': 0}
+            colors['red'] = {'rgb': self.color_defs['red']['rgb'], 'button': self.color_defs['red']['button'], 'player': 1}
+            colors['green'] = {'rgb': self.color_defs['green']['rgb'], 'button': self.color_defs['green']['button'], 'player': 2}
+            colors['blue'] = {'rgb': self.color_defs['blue']['rgb'], 'button': self.color_defs['blue']['button'], 'player': 3}
+
+        return colors
+
+    def print_mode_info(self):
+        """Print game mode information"""
+        if self.num_players == 1:
+            print("\n👤 Single player mode")
+            print("   (Connect more controllers for co-op)")
+        elif self.num_players == 2:
+            print("\n👥 Co-op mode (2 players)")
+            print("   P1: 🟡 Yellow + 🔴 Red")
+            print("   P2: 🟢 Green + 🔵 Blue")
+        elif self.num_players == 3:
+            print("\n👥 Co-op mode (3 players)")
+            print("   P1: 🟡 Yellow")
+            print("   P2: 🔴 Red")
+            print("   P3: 🟢 Green + 🔵 Blue")
+        else:
+            print("\n👥 Co-op mode (4 players)")
+            print("   P1: 🟡 Yellow")
+            print("   P2: 🔴 Red")
+            print("   P3: 🟢 Green")
+            print("   P4: 🔵 Blue")
+
+    def reset_game(self):
+        """Reset all game variables for a new game"""
+        self.player_pos = self.led_config['count'] // 2
+        self.obstacles = []
+        self.score = 0
+        self.pressed_buttons = {}
+        self.button_duration = 1.0
+        self.obstacles_passed = 0
+        self.current_difficulty = 1
+        self.spawn_interval = self.led_config['count'] // 2
+        self.next_spawn_at = self.led_config['count'] - 1
+        self.color_history = []
+        self.base_speed = 0.25
+        self.current_speed = self.base_speed
+        self.last_update = time.time()
 
     def update_display(self):
-        """Update de LED strip met huidige spelstatus"""
-        # Clear alles
+        """Update the LED strip with current game state"""
         self.strip.fill((0, 0, 0))
 
-        # Teken alle obstakels met hun kleur
         for obs in self.obstacles:
             if 0 <= obs['pos'] < self.led_config['count']:
                 self.strip[obs['pos']] = obs['color']
 
-        # Teken speler - alleen zichtbaar als NIET aan het springen
-        # Als er een knop ingedrukt is, is de speler "in de lucht" (onzichtbaar)
         if len(self.pressed_buttons) == 0:
             self.strip[self.player_pos] = self.player_color
 
         self.strip.show()
 
+    def show_pause_display(self):
+        """Show pause indicator - blinking game state"""
+        t = time.time()
+
+        if int(t * 2) % 2 == 0:
+            self.strip.fill((0, 0, 0))
+            for obs in self.obstacles:
+                if 0 <= obs['pos'] < self.led_config['count']:
+                    self.strip[obs['pos']] = obs['color']
+            self.strip[self.player_pos] = self.player_color
+        else:
+            self.strip.fill((0, 0, 0))
+            for obs in self.obstacles:
+                if 0 <= obs['pos'] < self.led_config['count']:
+                    r, g, b = obs['color']
+                    self.strip[obs['pos']] = (r // 4, g // 4, b // 4)
+
+        self.strip.show()
+
     def show_animation(self, color, duration=1.0, blink_count=3):
-        """Toon een animatie op alle LEDs"""
+        """Show a blink animation on all LEDs"""
         blink_duration = duration / (blink_count * 2)
         anim_color = (color['r'], color['g'], color['b'])
 
         for _ in range(blink_count):
-            # Aan
             self.strip.fill(anim_color)
             self.strip.show()
             time.sleep(blink_duration)
 
-            # Uit
             self.strip.fill((0, 0, 0))
             self.strip.show()
             time.sleep(blink_duration)
 
-    def press_button(self, button):
-        """Registreer knopdruk"""
-        self.pressed_buttons.add(button)
-        self.button_press_time[button] = time.time()
-
-        # Print welke kleur knop werd gedrukt (voor feedback)
-        color_name = None
-        for name, data in self.colors.items():
-            if data['button'] == button:
-                color_name = name.upper()
-                break
-        if color_name:
-            print(f"🎮 Button {button} → {color_name} knop gedrukt!")
-        else:
-            print(f"🎮 Button {button} gedrukt (onbekend)")
-
-    def get_gradient_color(self, value, max_value):
-        """Bereken gradient kleur van groen naar rood"""
-        # value 0.0 = groen, 0.5 = geel, 1.0 = rood
-        ratio = min(value / max_value, 1.0) if max_value > 0 else 0
-
-        if ratio < 0.5:
-            # Groen naar geel
-            r = int(255 * (ratio * 2))
-            g = 255
-            b = 0
-        else:
-            # Geel naar rood
-            r = 255
-            g = int(255 * (1 - (ratio - 0.5) * 2))
-            b = 0
-
-        return (r, g, b)
-
-    def show_score_bar(self):
-        """Toon score als bar graph met gekleurde segmenten"""
-        # Clear strip
-        self.strip.fill((0, 0, 0))
-
-        # Bereken hoeveel LEDs per punt (dynamisch schalen voor hoge scores)
-        total_leds = self.led_config['count']
-
-        if self.score <= total_leds:
-            # 1 LED per punt tot we de strip vol hebben
-            leds_to_light = self.score
-            for i in range(leds_to_light):
-                color = self.get_gradient_color(i, total_leds)
-                self.strip[i] = color
-        else:
-            # Score > LED count: schaal zodat volle strip = huidige score
-            # Elke LED representeert meerdere punten
-            points_per_led = self.score / total_leds
-
-            for i in range(total_leds):
-                # Kleur gebaseerd op positie
-                color = self.get_gradient_color(i, total_leds)
-                self.strip[i] = color
-
-        self.strip.show()
-
     def show_score_digits(self):
-        """Toon score als cijfers met kleurcodering (10 LEDs per cijfer)"""
-        # Clear strip
+        """Show score as digits with color coding (10 LEDs per digit)"""
         self.strip.fill((0, 0, 0))
 
-        # Paars voor 0 (speciaal patroon: aan-uit-aan-uit)
-        color_zero = (200, 0, 200)  # Paars
-
-        # Score naar cijfers (gewoon links naar rechts)
-        digits = [int(d) for d in str(self.score)]  # 157 -> [1, 5, 7]
+        color_zero = (200, 0, 200)
+        digits = [int(d) for d in str(self.score)]
 
         total_leds = self.led_config['count']
-        max_digits = total_leds // 10  # Max 6 cijfers op 60 LEDs
-        num_digits = len(digits)
+        max_digits = total_leds // 10
 
-        # Kleuren array (zelfde volgorde als game: geel, rood, groen, blauw)
         colors_palette = [
-            (255, 255, 0),  # Geel
-            (255, 0, 0),    # Rood
-            (0, 255, 0),    # Groen
-            (0, 0, 255),    # Blauw
+            (255, 255, 0),
+            (255, 0, 0),
+            (0, 255, 0),
+            (0, 0, 255),
         ]
 
-        # Teken elk cijfer (van links naar rechts)
         for pos, digit in enumerate(digits):
             if pos >= max_digits:
-                break  # Te veel cijfers voor strip
+                break
 
-            # Start positie voor dit cijfer
             start_led = pos * 10
 
             if digit == 0:
-                # Speciaal patroon voor 0: aan-uit-aan-uit-aan-uit-aan-uit-aan-uit
                 for i in range(10):
                     led_idx = start_led + i
-                    if led_idx < total_leds:
-                        if i % 2 == 0:  # Even posities = aan
-                            self.strip[led_idx] = color_zero
-                        # Oneven posities blijven uit (zwart)
+                    if led_idx < total_leds and i % 2 == 0:
+                        self.strip[led_idx] = color_zero
             else:
-                # Normaal cijfer: eerste N LEDs aan, rest uit
-                # Kies kleur op basis van positie vanaf links
                 color_bright = colors_palette[pos % 4]
-
                 for i in range(10):
                     led_idx = start_led + i
-                    if led_idx < total_leds:
-                        if i < digit:
-                            # LED aan
-                            self.strip[led_idx] = color_bright
-                        # Rest blijft uit (zwart)
+                    if led_idx < total_leds and i < digit:
+                        self.strip[led_idx] = color_bright
 
         self.strip.show()
 
-    def show_score(self):
-        """Toon score als gekleurde cijfers op LED strip"""
-        # Print exacte score in console
-        print(f"\n{'='*40}")
-        print(f"🏆 EINDSTAND: {self.score} punten!")
-        print(f"{'='*40}\n")
+    def press_button(self, player_idx, button, color_name):
+        """Register button press for a specific player"""
+        key = (player_idx, button)
+        self.pressed_buttons[key] = time.time()
 
-        # Toon cijfer display
-        self.show_score_digits()
+        if self.num_players > 1:
+            print(f"P{player_idx + 1} {color_name.upper()}!")
+        else:
+            print(f"🎮 {color_name.upper()}!")
 
-        # Wacht minimaal 3 seconden
-        print(f"Score wordt getoond voor 3 seconden...")
-        time.sleep(3.0)
+    def is_button_pressed(self, required_player, button):
+        """Check if the correct player has the button pressed"""
+        if self.num_players == 1:
+            for (player_idx, btn), _ in self.pressed_buttons.items():
+                if btn == button:
+                    return True
+            return False
 
-        # Leeg event buffer (negeer knoppen tijdens score display)
-        pygame.event.clear()
-
-        # Nu wacht op knopdruk om opnieuw te starten
-        print(f"Druk op een kleurknop om opnieuw te starten...")
-        waiting = True
-        while waiting:
-            pygame.event.pump()
-            for event in pygame.event.get():
-                if event.type == pygame.JOYBUTTONDOWN:
-                    # Check of het een kleurknop is
-                    for color_data in self.colors.values():
-                        if event.button == color_data['button']:
-                            waiting = False
-                            break
-            time.sleep(0.1)
+        key = (required_player, button)
+        return key in self.pressed_buttons
 
     def get_available_colors(self):
-        """Geef beschikbare kleuren op basis van score (progressief toevoegen)"""
-        if self.score >= 18:
-            return ['yellow', 'red', 'green', 'blue']  # Alle 4 kleuren
-        elif self.score >= 12:
-            return ['yellow', 'red', 'green']  # 3 kleuren
-        elif self.score >= 6:
-            return ['yellow', 'red']  # 2 kleuren
+        """Return available colors based on score and player count"""
+        if self.num_players == 1:
+            # Single player: progressive unlock
+            if self.score >= 18:
+                return ['yellow', 'red', 'green', 'blue']
+            elif self.score >= 12:
+                return ['yellow', 'red', 'green']
+            elif self.score >= 6:
+                return ['yellow', 'red']
+            else:
+                return ['yellow']
+        elif self.num_players == 2:
+            # 2 players: start with 1 each, unlock second color
+            if self.score >= 6:
+                return ['yellow', 'red', 'green', 'blue']
+            elif self.score >= 3:
+                return ['yellow', 'red', 'green']
+            else:
+                return ['yellow', 'green']
+        elif self.num_players == 3:
+            # 3 players: start with 1 each, P3 gets second color later
+            if self.score >= 6:
+                return ['yellow', 'red', 'green', 'blue']
+            else:
+                return ['yellow', 'red', 'green']
         else:
-            return ['yellow']  # Alleen geel (begin)
+            # 4 players: all colors from start
+            return ['yellow', 'red', 'green', 'blue']
 
     def update_difficulty(self):
-        """Update moeilijkheidsgraad op basis van score"""
-        # Snelle start progressie, daarna geleidelijk
+        """Update difficulty level based on score"""
         if self.score <= 2:
             new_difficulty = 1
         elif self.score <= 5:
@@ -297,137 +347,142 @@ class LEDGame:
         elif self.score <= 20:
             new_difficulty = 5
         else:
-            # Na score 20: elke 8 punten +1 level
             new_difficulty = 5 + ((self.score - 20) // 8)
 
         if new_difficulty > self.current_difficulty:
-            old_difficulty = self.current_difficulty
             self.current_difficulty = new_difficulty
-
-            # Update spawn interval (minimum 3 LEDs apart)
             self.spawn_interval = max(3, self.led_config['count'] // self.current_difficulty)
-
-            # Update speed (wordt sneller: 0.3 → 0.05s minimum)
-            # Elke level: -0.015s sneller
             self.current_speed = max(0.05, self.base_speed - (self.current_difficulty * 0.015))
 
-            # Uitgebreide feedback
             print(f"⚡ Level {self.current_difficulty}!")
-            print(f"   📏 Interval: {self.spawn_interval} LEDs")
-            print(f"   ⏱️  Snelheid: {self.current_speed:.3f}s")
 
-        # Check voor nieuwe kleuren
-        available_colors = self.get_available_colors()
-        if len(available_colors) == 2 and self.score == 6:
-            print(f"🎨 Nieuwe kleur! Rood toegevoegd - gebruik B knop!")
-        elif len(available_colors) == 3 and self.score == 12:
-            print(f"🎨 Nieuwe kleur! Groen toegevoegd - gebruik A knop!")
-        elif len(available_colors) == 4 and self.score == 18:
-            print(f"🎨 Nieuwe kleur! Blauw toegevoegd - gebruik X knop!")
-
-    def should_spawn_obstacle(self):
-        """Check of we een nieuw obstakel moeten spawnen"""
-        # Kijk of er al een obstakel is op de spawn positie (voorkomt overlap)
-        spawn_pos = self.led_config['count'] - 1
-        for obs in self.obstacles:
-            if obs['pos'] == spawn_pos:
-                return False
-        return True
+        # Announce new colors based on player count
+        available = self.get_available_colors()
+        if self.num_players == 1:
+            if len(available) == 2 and self.score == 6:
+                print(f"🎨 +Red!")
+            elif len(available) == 3 and self.score == 12:
+                print(f"🎨 +Green!")
+            elif len(available) == 4 and self.score == 18:
+                print(f"🎨 +Blue!")
+        elif self.num_players == 2:
+            if len(available) == 3 and self.score == 3:
+                print(f"🎨 +Red (P1)!")
+            elif len(available) == 4 and self.score == 6:
+                print(f"🎨 +Blue (P2)!")
+        elif self.num_players == 3:
+            if len(available) == 4 and self.score == 6:
+                print(f"🎨 +Blue (P3)!")
 
     def spawn_obstacle(self):
-        """Spawn 1 nieuw obstakel met random kleur aan het begin van de strip"""
-        if self.should_spawn_obstacle():
-            import random
+        """Spawn a new obstacle"""
+        spawn_pos = self.led_config['count'] - 1
 
-            # Kies random kleur uit beschikbare kleuren
-            available_colors = self.get_available_colors()
-            color_name = random.choice(available_colors)
-            color_data = self.colors[color_name]
+        for obs in self.obstacles:
+            if obs['pos'] == spawn_pos:
+                return
 
-            # Maak obstakel object
-            obstacle = {
-                'pos': self.led_config['count'] - 1,
-                'color': color_data['rgb'],
-                'button': color_data['button'],
-                'color_name': color_name
-            }
+        available_colors = self.get_available_colors()
+        color_name = random.choice(available_colors)
+        color_data = self.colors[color_name]
 
-            self.obstacles.append(obstacle)
-            self.next_spawn_at = obstacle['pos'] - self.spawn_interval
+        obstacle = {
+            'pos': spawn_pos,
+            'color': color_data['rgb'],
+            'button': color_data['button'],
+            'player': color_data['player'],
+            'color_name': color_name
+        }
+
+        self.obstacles.append(obstacle)
+        self.next_spawn_at = obstacle['pos'] - self.spawn_interval
 
     def game_over(self):
-        """Game over animatie"""
-        print(f"❌ Geraakt! Eindstand: {self.score}")
+        """Handle game over"""
+        print(f"❌ Game Over! Score: {self.score}")
 
-        # Eerst: rood knipperen (fail animatie)
         self.show_animation(self.game_config['fail_color'], 1.0, 3)
 
-        # Dan: score tonen
-        if self.score > 0:
-            self.show_score()
+        print(f"\n{'='*40}")
+        print(f"🏆 FINAL SCORE: {self.score}")
+        print(f"{'='*40}")
+        print(f"\nPress START for new game...")
 
-        # Reset voor nieuwe game
-        self.score = 0
-        self.obstacles = []
-        self.obstacles_passed = 0
-        self.current_difficulty = 1
-        self.spawn_interval = self.led_config['count'] // 2  # Start met 2 obstacles (30 LEDs)
-        self.next_spawn_at = self.led_config['count'] - 1
-        self.pressed_buttons = set()
-        self.button_press_time = {}
-        self.color_history = []  # Reset kleur geschiedenis
-        self.current_speed = self.base_speed  # Reset snelheid
+        self.show_score_digits()
+        self.state = self.STATE_GAME_OVER
 
     def handle_input(self):
-        """Verwerk controller input"""
+        """Process controller input from all players"""
         pygame.event.pump()
 
         for event in pygame.event.get():
-            # Knop gedrukt - registreer kleurknop
             if event.type == pygame.JOYBUTTONDOWN:
-                # Check of het een van de kleurknoppen is
-                for color_data in self.colors.values():
-                    if event.button == color_data['button']:
-                        self.press_button(event.button)
-                        break
+                joy_id = event.joy
+
+                # Ignore controllers beyond player count
+                if joy_id >= self.num_players:
+                    continue
+
+                # Start button (any controller)
+                if event.button == self.start_button:
+                    if self.state == self.STATE_PLAYING:
+                        self.state = self.STATE_PAUSED
+                        print("\n⏸️  PAUSED")
+                    elif self.state == self.STATE_PAUSED:
+                        self.state = self.STATE_PLAYING
+                        self.last_update = time.time()
+                        print("\n▶️  RESUMED")
+                    elif self.state == self.STATE_GAME_OVER:
+                        # Re-detect controllers for new game
+                        print("\n🔄 Checking controllers...")
+                        self.detect_controllers()
+                        self.reset_game()
+                        self.state = self.STATE_PLAYING
+                        print("🎮 New game!")
+
+                # Color buttons (only when playing)
+                elif self.state == self.STATE_PLAYING:
+                    for color_name, color_data in self.colors.items():
+                        if event.button == color_data['button']:
+                            required_player = color_data['player']
+
+                            if self.num_players == 1:
+                                self.press_button(joy_id, event.button, color_name)
+                            elif joy_id == required_player:
+                                self.press_button(joy_id, event.button, color_name)
+                            break
 
     def update_obstacles(self):
-        """Beweeg alle obstakels en check collision"""
-        # Update button press status (laat oude presses verlopen)
+        """Move all obstacles and check collision"""
         current_time = time.time()
-        expired_buttons = []
-        for button, press_time in self.button_press_time.items():
-            if current_time - press_time > self.button_duration:
-                expired_buttons.append(button)
+        expired = [key for key, press_time in self.pressed_buttons.items()
+                   if current_time - press_time > self.button_duration]
+        for key in expired:
+            del self.pressed_buttons[key]
 
-        for button in expired_buttons:
-            self.pressed_buttons.discard(button)
-            del self.button_press_time[button]
-
-        # Beweeg alle obstakels 1 positie naar links
         for obs in self.obstacles:
             obs['pos'] -= 1
 
-        # Check of we nieuwe obstakel moeten spawnen (continue flow!)
         if len(self.obstacles) == 0 or self.obstacles[-1]['pos'] <= self.next_spawn_at:
             self.spawn_obstacle()
 
-        # Check collision met alle obstakels
-        for obs in self.obstacles[:]:  # Copy list to allow removal during iteration
+        for obs in self.obstacles[:]:
             if obs['pos'] == self.player_pos:
-                # Obstakel is PRECIES op speler!
-                # Check of juiste knop is ingedrukt
-                if obs['button'] in self.pressed_buttons:
-                    # Juiste kleur! Safe! Sla kleur op voor score display
-                    print(f"✅ {obs['color_name'].upper()} - Goed gedaan!")
+                required_player = obs['player']
+                if self.is_button_pressed(required_player, obs['button']):
+                    if self.num_players > 1:
+                        print(f"✅ P{required_player + 1} {obs['color_name'].upper()}")
+                    else:
+                        print(f"✅ {obs['color_name'].upper()}")
                     self.color_history.append(obs['color'])
                 else:
-                    # Verkeerde knop of niet gedrukt - geraakt!
-                    print(f"💥 Gemist! Moest {obs['color_name'].upper()} knop drukken!")
+                    if self.num_players > 1:
+                        print(f"💥 P{required_player + 1} missed {obs['color_name'].upper()}!")
+                    else:
+                        print(f"💥 Missed {obs['color_name'].upper()}!")
                     self.game_over()
                     return
 
-        # Tel obstakels die voorbij zijn gegaan en verwijder ze
         before_count = len(self.obstacles)
         self.obstacles = [obs for obs in self.obstacles if obs['pos'] >= 0]
         obstacles_passed = before_count - len(self.obstacles)
@@ -435,46 +490,58 @@ class LEDGame:
         if obstacles_passed > 0:
             self.obstacles_passed += obstacles_passed
             self.score += 1
-            print(f"✅ Score: {self.score}")
-            self.update_difficulty()  # Check of moeilijkheidsgraad omhoog moet
+            print(f"Score: {self.score}")
+            self.update_difficulty()
+
+    def cleanup(self):
+        """Clean up resources"""
+        self.running = False
+        self.strip.fill((0, 0, 0))
+        self.strip.show()
+        pygame.quit()
+
+    def signal_handler(self, signum, frame):
+        """Handle termination signals"""
+        print(f"\n👋 Signal {signum} received, shutting down...")
+        self.cleanup()
+        sys.exit(0)
 
     def run(self):
-        """Start de game loop"""
-        print("\n🎮 LED Strip Kleur Game gestart!")
+        """Main game loop"""
+        # Setup signal handlers for clean shutdown
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        signal.signal(signal.SIGINT, self.signal_handler)
+
+        print("\n🎮 LED Runner")
         print("━━━━━━━━━━━━━━━━━━━━━━━━━━")
-        print("SNES Controller:")
-        print("  🟡 Y knop (boven) = Gele obstakels")
-        print("  🔴 B knop (rechts) = Rode obstakels")
-        print("  🟢 A knop (onder) = Groene obstakels")
-        print("  🔵 X knop (links) = Blauwe obstakels")
-        print("\nDruk de juiste kleurknop voor elk obstakel!")
-        print("Druk CTRL+C om te stoppen\n")
+        print("START = Pause / Resume / New game")
+        print("\nGame starting...")
+        print("CTRL+C to quit\n")
 
         try:
-            last_update = time.time()
-
             while self.running:
-                # Handel input af
                 self.handle_input()
 
-                # Update obstakels positie op interval (gebruik dynamic speed!)
-                current_time = time.time()
-                if current_time - last_update >= self.current_speed:
-                    self.update_obstacles()
-                    last_update = current_time
+                if self.state == self.STATE_PLAYING:
+                    current_time = time.time()
+                    if current_time - self.last_update >= self.current_speed:
+                        self.update_obstacles()
+                        self.last_update = current_time
+                    if self.state == self.STATE_PLAYING:
+                        self.update_display()
 
-                # Update display
-                self.update_display()
+                elif self.state == self.STATE_PAUSED:
+                    self.show_pause_display()
 
-                # Kleine delay om CPU te sparen
+                elif self.state == self.STATE_GAME_OVER:
+                    pass
+
                 time.sleep(0.01)
 
         except KeyboardInterrupt:
-            print(f"\n\n👋 Game gestopt. Eindstand: {self.score}")
+            print(f"\n\n👋 Stopped. Score: {self.score}")
         finally:
-            self.strip.fill((0, 0, 0))
-            self.strip.show()
-            pygame.quit()
+            self.cleanup()
 
 
 if __name__ == "__main__":
