@@ -374,7 +374,8 @@ class LEDGame:
                     if current_time - self.last_update >= self.current_speed:
                         self.update_obstacles()
                         self.last_update = current_time
-                    self.update_display()
+                    if self.state == self.STATE_PLAYING:
+                        self.update_display()
 
                 elif self.state == self.STATE_PAUSED:
                     self.show_pause_display()
